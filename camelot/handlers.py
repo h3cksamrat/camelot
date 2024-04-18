@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Union
 
@@ -16,6 +17,8 @@ from .utils import get_page_layout
 from .utils import get_rotation
 from .utils import get_text_objects
 from .utils import is_url
+
+from threading import Thread
 
 
 class PDFHandler:
@@ -171,14 +174,35 @@ class PDFHandler:
             layout_kwargs = {}
 
         tables = []
+
+        def extract_tables(p):
+            # FIXME: make parser be used for all parsing, reduce class attributes alot
+            parser = Lattice(**kwargs)
+            table = parser.extract_tables(
+                p, suppress_stdout=suppress_stdout, layout_kwargs=layout_kwargs
+            )
+            tables.extend(table)
+
         with TemporaryDirectory() as tempdir:
+            threads = []
             for p in self.pages:
-                self._save_page(self.filepath, p, tempdir)
+                # Saves each page as a separate PDF
+                t = Thread(target=self._save_page, args=(self.filepath, p, tempdir))
+                t.start()
+                threads.append(t)
+
+            for t in threads:
+                t.join()
+
             pages = [os.path.join(tempdir, f"page-{p}.pdf") for p in self.pages]
-            parser = Lattice(**kwargs) if flavor == "lattice" else Stream(**kwargs)
+            threads = []
+
             for p in pages:
-                t = parser.extract_tables(
-                    p, suppress_stdout=suppress_stdout, layout_kwargs=layout_kwargs
-                )
-                tables.extend(t)
+                t = Thread(target=extract_tables, args=(p,))
+                t.start()
+                threads.append(t)
+
+            for t in threads:
+                t.join()
+
         return TableList(sorted(tables))
